@@ -347,6 +347,16 @@ def _interval_label(interval: str) -> str:
     return interval.replace("_", " ").title()
 
 
+def _device_info(config_entry: ConfigEntry) -> dict:
+    """Return device info for the helper device shared by all sensors in this entry."""
+    name = config_entry.data.get("name") or config_entry.options.get("name") or "Unnamed"
+    return {
+        "identifiers": {(DOMAIN, config_entry.entry_id)},
+        "name": f"{name} Energy Scenarios",
+        "manufacturer": "Custom Integration",
+    }
+
+
 # ---------------------------------------------------------------------------
 # DerivedFlowSensor
 # ---------------------------------------------------------------------------
@@ -389,6 +399,10 @@ class DerivedFlowSensor(SensorEntity, RestoreEntity):
     @property
     def unique_id(self) -> str:
         return self._attr_unique_id
+
+    @property
+    def device_info(self) -> dict:
+        return _device_info(self._config_entry)
 
     @property
     def state(self):
@@ -528,6 +542,10 @@ class NetCostSensor(BaseUtilitySensor, RestoreEntity):
     @property
     def unique_id(self) -> str:
         return self._attr_unique_id
+
+    @property
+    def device_info(self) -> dict:
+        return _device_info(self._config_entry)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
@@ -783,6 +801,10 @@ class SavingsSensor(SensorEntity, RestoreEntity):
     @property
     def unique_id(self) -> str:
         return self._attr_unique_id
+
+    @property
+    def device_info(self) -> dict:
+        return _device_info(self._config_entry)
 
     @property
     def state(self):
