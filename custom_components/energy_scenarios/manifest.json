@@ -1,0 +1,11 @@
+{
+  "domain": "energy_scenarios",
+  "name": "Energy Scenarios",
+  "version": "1.0.0",
+  "config_flow": true,
+  "documentation": "",
+  "requirements": [],
+  "dependencies": [],
+  "codeowners": [],
+  "iot_class": "local_push"
+}

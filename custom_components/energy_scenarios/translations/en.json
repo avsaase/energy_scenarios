@@ -1,0 +1,72 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Energy Scenarios — Sensors",
+        "description": "Configure your energy meter sensors. Grid import is required; all others are optional but unlock additional scenarios.",
+        "data": {
+          "name": "Name",
+          "grid_import_sensor": "Grid Import Sensor",
+          "grid_export_sensor": "Grid Export Sensor (optional)",
+          "solar_production_sensor": "Solar Production Sensor (optional)",
+          "battery_charge_sensor": "Battery Charge Sensor (optional)",
+          "battery_discharge_sensor": "Battery Discharge Sensor (optional)"
+        }
+      },
+      "prices": {
+        "title": "Energy Scenarios — Prices",
+        "description": "Configure your electricity price sensors.",
+        "data": {
+          "take_price_sensor": "Take Price Sensor (import tariff)",
+          "feed_price_sensor": "Feed Price Sensor (export tariff, optional)"
+        }
+      },
+      "intervals": {
+        "title": "Energy Scenarios — Intervals",
+        "description": "Select which cost periods to create sensors for.",
+        "data": {
+          "selected_sensors": "Cost periods"
+        }
+      }
+    },
+    "error": {
+      "invalid_entity": "One or more entity IDs are invalid.",
+      "missing_grid_import": "Grid import sensor is required.",
+      "battery_sensors_incomplete": "Provide both battery charge and battery discharge sensors, or neither.",
+      "no_sensors_selected": "Select at least one cost period."
+    }
+  },
+  "options": {
+    "step": {
+      "user": {
+        "title": "Energy Scenarios — Sensors",
+        "data": {
+          "name": "Name",
+          "grid_import_sensor": "Grid Import Sensor",
+          "grid_export_sensor": "Grid Export Sensor (optional)",
+          "solar_production_sensor": "Solar Production Sensor (optional)",
+          "battery_charge_sensor": "Battery Charge Sensor (optional)",
+          "battery_discharge_sensor": "Battery Discharge Sensor (optional)"
+        }
+      },
+      "prices": {
+        "title": "Energy Scenarios — Prices",
+        "data": {
+          "take_price_sensor": "Take Price Sensor",
+          "feed_price_sensor": "Feed Price Sensor (optional)"
+        }
+      },
+      "intervals": {
+        "title": "Energy Scenarios — Intervals",
+        "data": {
+          "selected_sensors": "Cost periods"
+        }
+      }
+    },
+    "error": {
+      "invalid_entity": "One or more entity IDs are invalid.",
+      "battery_sensors_incomplete": "Provide both battery charge and battery discharge sensors, or neither.",
+      "no_sensors_selected": "Select at least one cost period."
+    }
+  }
+}
