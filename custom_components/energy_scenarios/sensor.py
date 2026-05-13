@@ -1,12 +1,11 @@
 """Sensor platform for Energy Scenarios."""
 
-from decimal import Decimal, InvalidOperation
 import logging
 import math
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 import voluptuous as vol
-
 from homeassistant.components.sensor import (
     SensorDeviceClass,
     SensorEntity,
@@ -15,28 +14,26 @@ from homeassistant.components.sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers import entity_platform
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_state_change_event
-from homeassistant.helpers.restore_state import ExtraStoredData, RestoreEntity
+from homeassistant.helpers.restore_state import RestoreEntity
 from homeassistant.util.dt import now
 
+from . import get_entry_config, get_selected_sensors
 from .const import (
     BATTERY_CHARGE_SENSOR,
     BATTERY_DISCHARGE_SENSOR,
-    DOMAIN,
     FEED_PRICE_SENSOR,
     GRID_EXPORT_SENSOR,
     GRID_IMPORT_SENSOR,
     INTERVALS,
-    MANUAL,
     QUARTERLY,
-    SELECTED_SENSORS,
     SERVICE_CALIBRATE,
     SERVICE_RESET_COST,
     SOLAR_PRODUCTION_SENSOR,
     TAKE_PRICE_SENSOR,
 )
-from . import get_entry_config, get_selected_sensors
 from .entity import BaseUtilitySensor
 
 _LOGGER = logging.getLogger(__name__)
@@ -120,6 +117,18 @@ async def async_setup_entry(
     config_entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
+    try:
+        await _async_setup_entry(hass, config_entry, async_add_entities)
+    except Exception:
+        _LOGGER.exception("Failed to set up Energy Scenarios sensor platform")
+        raise
+
+
+async def _async_setup_entry(
+    hass: HomeAssistant,
+    config_entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
     data = get_entry_config(config_entry)
     selected = get_selected_sensors(config_entry)
 
@@ -137,6 +146,15 @@ async def async_setup_entry(
 
     name_prefix = data.get("name", "Unnamed")
     entry_id = config_entry.entry_id
+
+    # Resolve currency once up-front so all sensors have a consistent unit
+    # from their first state write (avoids statistics_meta unit mismatch).
+    initial_unit: str | None = None
+    price_state = hass.states.get(take_price_id)
+    if price_state:
+        unit = price_state.attributes.get("unit_of_measurement", "")
+        if "/" in unit:
+            initial_unit = unit.split("/")[0].strip()
 
     sensors: list[SensorEntity] = []
 
@@ -242,6 +260,7 @@ async def async_setup_entry(
                 feed_sources=real_feed_sources,
                 take_price_id=take_price_id,
                 feed_price_id=feed_price_id,
+                initial_unit=initial_unit,
             )
         )
 
@@ -260,6 +279,7 @@ async def async_setup_entry(
                     feed_sources=no_batt_feed_sources,
                     take_price_id=take_price_id,
                     feed_price_id=feed_price_id,
+                    initial_unit=initial_unit,
                 )
             )
 
@@ -278,6 +298,7 @@ async def async_setup_entry(
                     feed_sources=[],
                     take_price_id=take_price_id,
                     feed_price_id=None,
+                    initial_unit=initial_unit,
                 )
             )
 
@@ -298,8 +319,9 @@ async def async_setup_entry(
                     interval=interval,
                     unique_id=f"{entry_id}_battery_savings_{interval}",
                     name=f"{name_prefix} Battery Savings {interval_label}",
-                    counterfactual_id=no_battery_cost_ids[interval],
-                    real_id=real_cost_ids[interval],
+                    counterfactual_uid=no_battery_cost_ids[interval],
+                    real_uid=real_cost_ids[interval],
+                    initial_unit=initial_unit,
                 )
             )
 
@@ -311,8 +333,9 @@ async def async_setup_entry(
                     interval=interval,
                     unique_id=f"{entry_id}_total_savings_{interval}",
                     name=f"{name_prefix} Total Savings {interval_label}",
-                    counterfactual_id=baseline_cost_ids[interval],
-                    real_id=real_cost_ids[interval],
+                    counterfactual_uid=baseline_cost_ids[interval],
+                    real_uid=real_cost_ids[interval],
+                    initial_unit=initial_unit,
                 )
             )
 
@@ -324,8 +347,9 @@ async def async_setup_entry(
                     interval=interval,
                     unique_id=f"{entry_id}_solar_savings_{interval}",
                     name=f"{name_prefix} Solar Savings {interval_label}",
-                    counterfactual_id=baseline_cost_ids[interval],
-                    real_id=no_battery_cost_ids[interval],
+                    counterfactual_uid=baseline_cost_ids[interval],
+                    real_uid=no_battery_cost_ids[interval],
+                    initial_unit=initial_unit,
                 )
             )
 
@@ -349,7 +373,9 @@ def _interval_label(interval: str) -> str:
 
 def _device_info(config_entry: ConfigEntry) -> dict:
     """Return device info for the helper device shared by all sensors in this entry."""
-    name = config_entry.data.get("name") or config_entry.options.get("name") or "Unnamed"
+    name = (
+        config_entry.data.get("name") or config_entry.options.get("name") or "Unnamed"
+    )
     return {
         "identifiers": {(DOMAIN, config_entry.entry_id)},
         "name": f"{name} Energy Scenarios",
@@ -373,6 +399,7 @@ class DerivedFlowSensor(SensorEntity, RestoreEntity):
     _attr_state_class = SensorStateClass.TOTAL
     _attr_device_class = SensorDeviceClass.ENERGY
     _attr_icon = "mdi:lightning-bolt"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(
         self,
@@ -518,11 +545,13 @@ class NetCostSensor(BaseUtilitySensor, RestoreEntity):
         feed_sources: list[tuple[str, float]],
         take_price_id: str,
         feed_price_id: str | None,
+        initial_unit: str | None = None,
     ) -> None:
         super().__init__(hass, interval)
         self._config_entry = config_entry
         self._attr_unique_id = unique_id
         self._name = name
+        self._unit_of_measurement = initial_unit
 
         self._take_sources = take_sources  # (entity_id, sign)
         self._feed_sources = feed_sources  # (entity_id, sign)
@@ -560,14 +589,14 @@ class NetCostSensor(BaseUtilitySensor, RestoreEntity):
         last = await self.async_get_last_state()
         if last and last.state not in (None, "unknown", "unavailable"):
             try:
-                self._state = Decimal(str(last.state))
                 self._cumulative_cost = float(last.state)
+                self._state = round(self._cumulative_cost, 4)
             except (InvalidOperation, TypeError, ValueError):
                 pass
             attrs = last.attributes
             if attrs.get("cumulative_cost") is not None:
                 self._cumulative_cost = float(attrs["cumulative_cost"])
-                self._state = Decimal(str(self._cumulative_cost))
+                self._state = round(self._cumulative_cost, 4)
             if attrs.get("last_readings"):
                 for eid, val in attrs["last_readings"].items():
                     if eid in self._last_readings and val is not None:
@@ -586,11 +615,7 @@ class NetCostSensor(BaseUtilitySensor, RestoreEntity):
                         self._last_readings[eid] = val
 
         # Resolve currency from price sensor
-        price_state = self.hass.states.get(self._take_price_id)
-        if price_state:
-            unit = price_state.attributes.get("unit_of_measurement", "")
-            if "/" in unit:
-                self._unit_of_measurement = unit.split("/")[0].strip()
+        self._resolve_currency()
 
         # Subscribe to all energy source sensors
         all_source_ids = list(
@@ -599,16 +624,6 @@ class NetCostSensor(BaseUtilitySensor, RestoreEntity):
         self._unsubs.append(
             async_track_state_change_event(
                 self.hass, all_source_ids, self._handle_energy_update
-            )
-        )
-
-        # Subscribe to price sensors
-        price_ids = [self._take_price_id]
-        if self._feed_price_id:
-            price_ids.append(self._feed_price_id)
-        self._unsubs.append(
-            async_track_state_change_event(
-                self.hass, price_ids, self._handle_price_update
             )
         )
 
@@ -623,6 +638,7 @@ class NetCostSensor(BaseUtilitySensor, RestoreEntity):
     @callback
     def _handle_energy_update(self, event: Event) -> None:
         """Process a delta from one energy source sensor."""
+        self._resolve_currency()
         entity_id = event.data["entity_id"]
         new_state = event.data.get("new_state")
         old_state = event.data.get("old_state")
@@ -665,60 +681,17 @@ class NetCostSensor(BaseUtilitySensor, RestoreEntity):
             if src_id == entity_id and feed_price is not None:
                 self._cumulative_cost -= delta_kwh * sign * feed_price
 
-        self._state = Decimal(str(self._cumulative_cost))
+        self._state = round(self._cumulative_cost, 4)
         self.async_write_ha_state()
 
-    @callback
-    def _handle_price_update(self, event: Event) -> None:
-        """Finalise pending energy at the old price before the new price takes effect."""
-        entity_id = event.data["entity_id"]
-        old_price_state = event.data.get("old_state")
-        old_price = _state_to_float(old_price_state)
-
-        if old_price is None:
+    def _resolve_currency(self) -> None:
+        if self._unit_of_measurement is not None:
             return
-
-        old_price_factor = _price_unit_factor(old_price_state)
-
-        if entity_id == self._take_price_id:
-            # Finalise all take-contributing sensors at old take price
-            for src_id, sign in self._take_sources:
-                self._finalise_source_at_price(
-                    src_id, sign, old_price * old_price_factor, is_feed=False
-                )
-
-        elif entity_id == self._feed_price_id:
-            # Finalise all feed-contributing sensors at old feed price
-            for src_id, sign in self._feed_sources:
-                self._finalise_source_at_price(
-                    src_id, sign, old_price * old_price_factor, is_feed=True
-                )
-
-        self._state = Decimal(str(self._cumulative_cost))
-        self.async_write_ha_state()
-
-    def _finalise_source_at_price(
-        self, entity_id: str, sign: float, price: float, is_feed: bool
-    ) -> None:
-        """Apply pending delta for one source at the given price and advance its baseline."""
-        current_state = self.hass.states.get(entity_id)
-        current_val = _state_to_float(current_state)
-        last = self._last_readings.get(entity_id)
-
-        if current_val is None or last is None:
-            return
-
-        if _source_reset(current_state, last):
-            self._last_readings[entity_id] = current_val
-            return
-
-        delta_kwh = (current_val - last) * self._energy_factors.get(entity_id, 1.0)
-        self._last_readings[entity_id] = current_val
-
-        if is_feed:
-            self._cumulative_cost -= delta_kwh * sign * price
-        else:
-            self._cumulative_cost += delta_kwh * sign * price
+        state = self.hass.states.get(self._take_price_id)
+        if state:
+            unit = state.attributes.get("unit_of_measurement", "")
+            if "/" in unit:
+                self._unit_of_measurement = unit.split("/")[0].strip()
 
     def _current_take_price(self) -> float | None:
         state = self.hass.states.get(self._take_price_id)
@@ -746,7 +719,7 @@ class NetCostSensor(BaseUtilitySensor, RestoreEntity):
                 self._last_readings[eid] = val
 
         self._cumulative_cost = 0.0
-        self._state = Decimal("0.00")
+        self._state = 0.0
         self._last_reset = now()
         self.async_write_ha_state()
         _LOGGER.debug("Meter reset for %s", self._name)
@@ -754,7 +727,7 @@ class NetCostSensor(BaseUtilitySensor, RestoreEntity):
     @callback
     def async_calibrate(self, value):
         self._cumulative_cost = float(str(value))
-        self._state = Decimal(str(self._cumulative_cost))
+        self._state = round(self._cumulative_cost, 4)
         self.async_write_ha_state()
 
 
@@ -768,6 +741,10 @@ class SavingsSensor(SensorEntity, RestoreEntity):
 
     No independent accumulation — simply reads the current state of two
     NetCostSensors. Resets are handled by the underlying sensors.
+
+    Receives the unique IDs of the two cost sensors; resolves them to
+    entity IDs via the entity registry in async_added_to_hass, because
+    entity IDs are not known until entities are registered.
     """
 
     _attr_device_class = SensorDeviceClass.MONETARY
@@ -780,18 +757,22 @@ class SavingsSensor(SensorEntity, RestoreEntity):
         interval: str,
         unique_id: str,
         name: str,
-        counterfactual_id: str,
-        real_id: str,
+        counterfactual_uid: str,
+        real_uid: str,
+        initial_unit: str | None = None,
     ) -> None:
         self.hass = hass
         self._config_entry = config_entry
         self._interval = interval
         self._attr_unique_id = unique_id
         self._name = name
-        self._counterfactual_id = counterfactual_id
-        self._real_id = real_id
+        self._counterfactual_uid = counterfactual_uid
+        self._real_uid = real_uid
+        # Resolved in async_added_to_hass
+        self._counterfactual_entity_id: str | None = None
+        self._real_entity_id: str | None = None
         self._state: float | None = None
-        self._unit_of_measurement: str | None = None
+        self._unit_of_measurement: str | None = initial_unit
         self._unsubs: list = []
 
     @property
@@ -821,7 +802,9 @@ class SavingsSensor(SensorEntity, RestoreEntity):
     @property
     def last_reset(self):
         """Mirror the last_reset of the counterfactual cost sensor."""
-        state = self.hass.states.get(self._counterfactual_id)
+        if self._counterfactual_entity_id is None:
+            return None
+        state = self.hass.states.get(self._counterfactual_entity_id)
         if state:
             lr = state.attributes.get("last_reset")
             if lr:
@@ -833,17 +816,39 @@ class SavingsSensor(SensorEntity, RestoreEntity):
         return None
 
     async def async_added_to_hass(self) -> None:
-        # Resolve currency unit from the real cost sensor
-        real_state = self.hass.states.get(self._real_id)
-        if real_state:
-            self._unit_of_measurement = real_state.attributes.get("unit_of_measurement")
+        from homeassistant.helpers import entity_registry as er
+
+        ent_reg = er.async_get(self.hass)
+
+        self._counterfactual_entity_id = ent_reg.async_get_entity_id(
+            "sensor", DOMAIN, self._counterfactual_uid
+        )
+        self._real_entity_id = ent_reg.async_get_entity_id(
+            "sensor", DOMAIN, self._real_uid
+        )
+
+        if self._counterfactual_entity_id is None or self._real_entity_id is None:
+            _LOGGER.warning(
+                "%s: could not resolve cost sensor entity IDs (cf=%s, real=%s)",
+                self._name,
+                self._counterfactual_uid,
+                self._real_uid,
+            )
+            return
+
+        if self._unit_of_measurement is None:
+            real_state = self.hass.states.get(self._real_entity_id)
+            if real_state:
+                self._unit_of_measurement = real_state.attributes.get(
+                    "unit_of_measurement"
+                )
 
         self._recompute()
 
         self._unsubs.append(
             async_track_state_change_event(
                 self.hass,
-                [self._counterfactual_id, self._real_id],
+                [self._counterfactual_entity_id, self._real_entity_id],
                 self._handle_update,
             )
         )
@@ -855,9 +860,8 @@ class SavingsSensor(SensorEntity, RestoreEntity):
 
     @callback
     def _handle_update(self, event: Event) -> None:
-        # Pick up unit if not yet resolved
-        if self._unit_of_measurement is None:
-            real_state = self.hass.states.get(self._real_id)
+        if self._unit_of_measurement is None and self._real_entity_id:
+            real_state = self.hass.states.get(self._real_entity_id)
             if real_state:
                 self._unit_of_measurement = real_state.attributes.get(
                     "unit_of_measurement"
@@ -867,8 +871,10 @@ class SavingsSensor(SensorEntity, RestoreEntity):
         self.async_write_ha_state()
 
     def _recompute(self) -> None:
-        cf_state = self.hass.states.get(self._counterfactual_id)
-        real_state = self.hass.states.get(self._real_id)
+        if self._counterfactual_entity_id is None or self._real_entity_id is None:
+            return
+        cf_state = self.hass.states.get(self._counterfactual_entity_id)
+        real_state = self.hass.states.get(self._real_entity_id)
         cf_val = _state_to_float(cf_state)
         real_val = _state_to_float(real_state)
 
