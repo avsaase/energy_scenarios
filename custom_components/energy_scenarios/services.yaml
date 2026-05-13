@@ -1,0 +1,22 @@
+reset_cost:
+  name: Reset cost
+  description: Reset the accumulated cost to zero.
+  target:
+    entity:
+      domain: sensor
+
+calibrate:
+  name: Calibrate
+  description: Set the accumulated cost to a specific value.
+  target:
+    entity:
+      domain: sensor
+  fields:
+    value:
+      name: Value
+      description: The value to set the cost to.
+      required: true
+      selector:
+        number:
+          mode: box
+          step: 0.001
