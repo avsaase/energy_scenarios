@@ -2,7 +2,7 @@
 
 import logging
 import math
-from decimal import Decimal, InvalidOperation
+from decimal import InvalidOperation
 from typing import Any
 
 import voluptuous as vol
@@ -401,6 +401,7 @@ class DerivedFlowSensor(SensorEntity, RestoreEntity):
     _attr_device_class = SensorDeviceClass.ENERGY
     _attr_icon = "mdi:lightning-bolt"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
+    _attr_suggested_display_precision = 4
 
     def __init__(
         self,
@@ -434,7 +435,7 @@ class DerivedFlowSensor(SensorEntity, RestoreEntity):
 
     @property
     def state(self):
-        return round(self._state, 4)
+        return self._state
 
     @property
     def unit_of_measurement(self) -> str:
@@ -534,6 +535,7 @@ class NetCostSensor(BaseUtilitySensor, RestoreEntity):
     """
 
     _attr_state_class = SensorStateClass.TOTAL
+    _attr_suggested_display_precision = 4
 
     def __init__(
         self,
@@ -591,13 +593,13 @@ class NetCostSensor(BaseUtilitySensor, RestoreEntity):
         if last and last.state not in (None, "unknown", "unavailable"):
             try:
                 self._cumulative_cost = float(last.state)
-                self._state = round(self._cumulative_cost, 4)
+                self._state = self._cumulative_cost
             except (InvalidOperation, TypeError, ValueError):
                 pass
             attrs = last.attributes
             if attrs.get("cumulative_cost") is not None:
                 self._cumulative_cost = float(attrs["cumulative_cost"])
-                self._state = round(self._cumulative_cost, 4)
+                self._state = self._cumulative_cost
             if attrs.get("last_readings"):
                 for eid, val in attrs["last_readings"].items():
                     if eid in self._last_readings and val is not None:
@@ -682,7 +684,7 @@ class NetCostSensor(BaseUtilitySensor, RestoreEntity):
             if src_id == entity_id and feed_price is not None:
                 self._cumulative_cost -= delta_kwh * sign * feed_price
 
-        self._state = round(self._cumulative_cost, 4)
+        self._state = self._cumulative_cost
         self.async_write_ha_state()
 
     def _resolve_currency(self) -> None:
@@ -728,7 +730,7 @@ class NetCostSensor(BaseUtilitySensor, RestoreEntity):
     @callback
     def async_calibrate(self, value):
         self._cumulative_cost = float(str(value))
-        self._state = round(self._cumulative_cost, 4)
+        self._state = self._cumulative_cost
         self.async_write_ha_state()
 
 
@@ -750,6 +752,7 @@ class SavingsSensor(SensorEntity, RestoreEntity):
 
     _attr_device_class = SensorDeviceClass.MONETARY
     _attr_icon = "mdi:piggy-bank"
+    _attr_suggested_display_precision = 4
 
     def __init__(
         self,
@@ -880,6 +883,6 @@ class SavingsSensor(SensorEntity, RestoreEntity):
         real_val = _state_to_float(real_state)
 
         if cf_val is not None and real_val is not None:
-            self._state = round(cf_val - real_val, 4)
+            self._state = cf_val - real_val
         else:
             self._state = None
