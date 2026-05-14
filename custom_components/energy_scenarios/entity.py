@@ -29,6 +29,36 @@ class BaseUtilitySensor(SensorEntity):
         self._last_reset = now()
         self._name = None
 
+    def calculate_last_reset_time(self):
+        """Return the most recent past interval boundary."""
+        current_time = now()
+
+        if self._interval == QUARTERLY:
+            current_quarter = (current_time.minute // 15) * 15
+            return current_time.replace(minute=current_quarter, second=0, microsecond=0)
+
+        if self._interval == HOURLY:
+            return current_time.replace(minute=0, second=0, microsecond=0)
+
+        if self._interval == DAILY:
+            return current_time.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        if self._interval == WEEKLY:
+            days_since_monday = current_time.weekday()
+            return (current_time - timedelta(days=days_since_monday)).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+
+        if self._interval == MONTHLY:
+            return current_time.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+
+        if self._interval == YEARLY:
+            return current_time.replace(
+                month=1, day=1, hour=0, minute=0, second=0, microsecond=0
+            )
+
+        return None
+
     def calculate_next_reset_time(self):
         """Return the datetime for the next interval boundary."""
         current_time = now()

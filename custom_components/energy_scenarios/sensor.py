@@ -14,7 +14,6 @@ from homeassistant.components.sensor import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.helpers import entity_platform
-from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.restore_state import RestoreEntity
@@ -143,7 +142,6 @@ async def _async_setup_entry(
 
     has_battery = bool(charge_id and discharge_id)
     has_solar = bool(solar_id)
-    has_export = bool(export_id)
 
     name_prefix = data.get("name", "Unnamed")
     entry_id = config_entry.entry_id
@@ -158,52 +156,6 @@ async def _async_setup_entry(
             initial_unit = unit.split("/")[0].strip()
 
     sensors: list[SensorEntity] = []
-
-    # ------------------------------------------------------------------
-    # Derived flow sensors (display)
-    # ------------------------------------------------------------------
-
-    # home_consumption (always useful when we have more than just import)
-    if has_solar or has_battery or has_export:
-        home_consumption_sources = [(import_id, 1.0)]
-        if solar_id:
-            home_consumption_sources.append((solar_id, 1.0))
-        if discharge_id:
-            home_consumption_sources.append((discharge_id, 1.0))
-        if charge_id:
-            home_consumption_sources.append((charge_id, -1.0))
-        if export_id:
-            home_consumption_sources.append((export_id, -1.0))
-
-        sensors.append(
-            DerivedFlowSensor(
-                hass=hass,
-                config_entry=config_entry,
-                unique_id=f"{entry_id}_home_consumption",
-                name=f"{name_prefix} Home Consumption",
-                sources=home_consumption_sources,
-            )
-        )
-
-    if has_battery:
-        sensors.append(
-            DerivedFlowSensor(
-                hass=hass,
-                config_entry=config_entry,
-                unique_id=f"{entry_id}_cf_import_no_battery",
-                name=f"{name_prefix} Counterfactual Import (No Battery)",
-                sources=[(import_id, 1.0), (discharge_id, 1.0)],
-            )
-        )
-        sensors.append(
-            DerivedFlowSensor(
-                hass=hass,
-                config_entry=config_entry,
-                unique_id=f"{entry_id}_cf_export_no_battery",
-                name=f"{name_prefix} Counterfactual Export (No Battery)",
-                sources=([(export_id, 1.0)] if export_id else []) + [(charge_id, 1.0)],
-            )
-        )
 
     # ------------------------------------------------------------------
     # NetCostSensors — one per (scenario × interval)
@@ -385,142 +337,6 @@ def _device_info(config_entry: ConfigEntry) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# DerivedFlowSensor
-# ---------------------------------------------------------------------------
-
-
-class DerivedFlowSensor(SensorEntity, RestoreEntity):
-    """Display-only cumulative energy sensor derived from weighted source sensors.
-
-    Represents counterfactual or derived energy flows (e.g. home consumption,
-    counterfactual grid import without battery). Not used in cost computation —
-    purely for dashboards.
-    """
-
-    _attr_state_class = SensorStateClass.TOTAL
-    _attr_device_class = SensorDeviceClass.ENERGY
-    _attr_icon = "mdi:lightning-bolt"
-    _attr_entity_category = EntityCategory.DIAGNOSTIC
-    _attr_suggested_display_precision = 4
-
-    def __init__(
-        self,
-        hass: HomeAssistant,
-        config_entry: ConfigEntry,
-        unique_id: str,
-        name: str,
-        sources: list[tuple[str, float]],
-    ) -> None:
-        self.hass = hass
-        self._config_entry = config_entry
-        self._attr_unique_id = unique_id
-        self._name = name
-        self._sources = sources  # list of (entity_id, weight)
-        self._state: float = 0.0
-        self._last_readings: dict[str, float | None] = {eid: None for eid, _ in sources}
-        self._energy_factors: dict[str, float] = {eid: 1.0 for eid, _ in sources}
-        self._unsubs: list = []
-
-    @property
-    def name(self) -> str:
-        return self._name
-
-    @property
-    def unique_id(self) -> str:
-        return self._attr_unique_id
-
-    @property
-    def device_info(self) -> dict:
-        return _device_info(self._config_entry)
-
-    @property
-    def state(self):
-        return self._state
-
-    @property
-    def unit_of_measurement(self) -> str:
-        return "kWh"
-
-    @property
-    def extra_state_attributes(self) -> dict[str, Any]:
-        return {"last_readings": {k: v for k, v in self._last_readings.items()}}
-
-    async def async_added_to_hass(self) -> None:
-        last = await self.async_get_last_state()
-        if last and last.state not in (None, "unknown", "unavailable"):
-            try:
-                self._state = float(last.state)
-            except (TypeError, ValueError):
-                pass
-            if last.attributes.get("last_readings"):
-                for eid, val in last.attributes["last_readings"].items():
-                    if eid in self._last_readings and val is not None:
-                        self._last_readings[eid] = float(val)
-
-        # Resolve unit factors from current sensor states
-        for eid, _ in self._sources:
-            state = self.hass.states.get(eid)
-            if state:
-                self._energy_factors[eid] = _energy_unit_factor(state)
-                if self._last_readings[eid] is None:
-                    val = _state_to_float(state)
-                    if val is not None:
-                        self._last_readings[eid] = val
-
-        for eid, _ in self._sources:
-            self._unsubs.append(
-                async_track_state_change_event(
-                    self.hass, [eid], self._handle_source_update
-                )
-            )
-
-    async def async_will_remove_from_hass(self) -> None:
-        for unsub in self._unsubs:
-            unsub()
-        self._unsubs.clear()
-
-    @callback
-    def _handle_source_update(self, event: Event) -> None:
-        entity_id = event.data["entity_id"]
-        new_state = event.data.get("new_state")
-        old_state = event.data.get("old_state")
-        current_val = _state_to_float(new_state)
-
-        if current_val is None:
-            return
-
-        # Resolve unit factor if not yet known
-        if self._energy_factors.get(entity_id, 1.0) == 1.0:
-            self._energy_factors[entity_id] = _energy_unit_factor(new_state)
-
-        last = self._last_readings.get(entity_id)
-        if last is None:
-            self._last_readings[entity_id] = current_val
-            self.async_write_ha_state()
-            return
-
-        # Detect reset
-        reset = (
-            current_val == 0
-            or _last_reset_changed(old_state, new_state)
-            or _source_reset(new_state, last)
-        )
-        if reset:
-            _LOGGER.debug(
-                "%s: source %s reset, reinitialising baseline", self._name, entity_id
-            )
-            self._last_readings[entity_id] = current_val
-            self.async_write_ha_state()
-            return
-
-        delta_kwh = (current_val - last) * self._energy_factors[entity_id]
-        weight = next(w for eid, w in self._sources if eid == entity_id)
-        self._state += delta_kwh * weight
-        self._last_readings[entity_id] = current_val
-        self.async_write_ha_state()
-
-
-# ---------------------------------------------------------------------------
 # NetCostSensor
 # ---------------------------------------------------------------------------
 
@@ -528,10 +344,10 @@ class DerivedFlowSensor(SensorEntity, RestoreEntity):
 class NetCostSensor(BaseUtilitySensor, RestoreEntity):
     """Accumulates net energy cost for one scenario over a reset interval.
 
-    Subscribes directly to raw source sensors (not to DerivedFlowSensor) so
-    that out-of-sync sensor updates are handled correctly: since cost is a
-    linear function of energy, each sensor's contribution is processed
-    independently when it arrives — order doesn't affect the final total.
+    Subscribes directly to raw source sensors so that out-of-sync sensor
+    updates are handled correctly: since cost is a linear function of energy,
+    each sensor's contribution is processed independently when it arrives —
+    order doesn't affect the final total.
     """
 
     _attr_state_class = SensorStateClass.TOTAL
@@ -619,6 +435,17 @@ class NetCostSensor(BaseUtilitySensor, RestoreEntity):
 
         # Resolve currency from price sensor
         self._resolve_currency()
+
+        # Reset if HA was down over an interval boundary
+        last_expected = self.calculate_last_reset_time()
+        if last_expected is not None:
+            last_reset_dt = self.last_reset
+            if last_reset_dt is None or last_reset_dt < last_expected:
+                _LOGGER.debug(
+                    "%s: missed reset detected (last=%s, expected=%s), resetting now",
+                    self._name, last_reset_dt, last_expected,
+                )
+                self.async_reset()
 
         # Subscribe to all energy source sensors
         all_source_ids = list(
