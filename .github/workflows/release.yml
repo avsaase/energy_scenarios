@@ -1,5 +1,3 @@
-# This workflow validates the manifest version and uploads the release zip.
-
 name: Release
 
 on:
@@ -21,17 +19,16 @@ jobs:
         if: github.event_name == 'release'
         run: |
           python scripts/check_release_version.py \
-            custom_components/dynamic_energy_cost/manifest.json \
+            custom_components/energy_scenarios/manifest.json \
             "${{ github.event.release.tag_name }}"
 
       - name: 📦 Created zipped release package
         shell: "bash"
         run: |
-          cd "${{ github.workspace }}/custom_components/dynamic_energy_cost"
-          zip dynamic_energy_cost.zip -r ./
+          cd "${{ github.workspace }}/custom_components/energy_scenarios"
+          zip energy_scenarios.zip -r ./
 
       - name: ⬆️ Upload zip to release
         uses: softprops/action-gh-release@v2.4.1
         with:
-          files: ${{ github.workspace }}/custom_components/dynamic_energy_cost/dynamic_energy_cost.zip
-        
+          files: ${{ github.workspace }}/custom_components/energy_scenarios/energy_scenarios.zip
