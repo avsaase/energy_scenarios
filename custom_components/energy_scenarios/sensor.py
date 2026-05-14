@@ -24,6 +24,7 @@ from . import get_entry_config, get_selected_sensors
 from .const import (
     BATTERY_CHARGE_SENSOR,
     BATTERY_DISCHARGE_SENSOR,
+    DOMAIN,
     FEED_PRICE_SENSOR,
     GRID_EXPORT_SENSOR,
     GRID_IMPORT_SENSOR,
